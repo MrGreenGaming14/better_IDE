@@ -96,7 +96,7 @@ To update plugins on an online machine:
 ## omp Integration & Review Workflow
 
 ### Live Reload of Agent Edits
-- When `omp` edits files, open buffers reload immediately without changing focus.
+- When `omp` (or anything else) changes a file on disk, its open buffer reloads immediately without changing focus. This includes files that did not exist yet when you opened them (e.g. `bide new.c` before `omp` writes it) and files that are deleted and recreated.
 - Undo history is preserved across reloads: pressing `u` in a clean buffer immediately reverts the external change.
 - Unsaved buffers are **never** silently overwritten. If a file changes on disk while you have unsaved modifications, bide displays a warning notification (`:e!` loads disk version, `:w!` keeps yours).
 - Edits made via shell or evaluation commands (e.g. `sed -i` or codegen scripts) reload live through the file watcher, but do not appear in the turn list.

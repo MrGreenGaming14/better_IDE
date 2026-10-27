@@ -1,8 +1,9 @@
--- Live reload of files changed on disk (e.g. by omp) while their buffers are visible.
--- LazyVim only runs :checktime on focus/terminal events; this watches each file directly.
+-- Live reload of files changed on disk (e.g. by omp) while their buffers are open.
+-- LazyVim only runs :checktime on focus/terminal events; this watches each file's directory, so
+-- atomic rename-writes, delete+recreate, and files created after the buffer was opened all reload.
 local M = {}
 
----@type table<integer, { handle: uv.uv_fs_event_t, timer: uv.uv_timer_t }>
+---@type table<integer, { handle: uv.uv_fs_event_t, timer: uv.uv_timer_t, missing: boolean }>
 local watchers = {}
 ---@type table<integer, boolean> buffers already warned about a disk/unsaved-edit conflict
 local warned = {}
@@ -27,8 +28,16 @@ function M.reload(buf)
     return
   end
   if not vim.bo[buf].modified then
-    -- autoread is on; reload keeps undo history so `u` reverts an external change
-    vim.cmd.checktime(buf)
+    local w = watchers[buf]
+    if w and w.missing and vim.uv.fs_stat(vim.api.nvim_buf_get_name(buf)) then
+      -- created after editing started: :checktime would block on a W13 "Load File" prompt
+      pcall(vim.api.nvim_buf_call, buf, function()
+        vim.cmd("silent edit")
+      end)
+    else
+      -- autoread is on; reload keeps undo history so `u` reverts an external change
+      vim.cmd.checktime(buf)
+    end
     return
   end
   if warned[buf] then
@@ -49,17 +58,24 @@ function M.arm(buf)
   if not vim.api.nvim_buf_is_valid(buf) or vim.bo[buf].buftype ~= "" then
     return
   end
-  local path = vim.api.nvim_buf_get_name(buf)
-  if path == "" or not vim.uv.fs_stat(path) then
+  local name = vim.api.nvim_buf_get_name(buf)
+  if name == "" then
     return
+  end
+  -- Watch the nearest existing ancestor directory and filter on the path component below it:
+  -- a directory watch survives the file's inode being replaced or the file not existing yet.
+  local path = vim.uv.fs_realpath(name) or name
+  local dir, child = vim.fs.dirname(path), vim.fs.basename(path)
+  while not vim.uv.fs_stat(dir) do
+    dir, child = vim.fs.dirname(dir), vim.fs.basename(dir)
   end
   local handle, timer = vim.uv.new_fs_event(), vim.uv.new_timer()
   if not handle or not timer then
     return
   end
-  watchers[buf] = { handle = handle, timer = timer }
-  handle:start(path, {}, function(err)
-    if err or timer:is_closing() then
+  watchers[buf] = { handle = handle, timer = timer, missing = vim.uv.fs_stat(path) == nil }
+  handle:start(dir, {}, function(err, filename)
+    if err or (filename and filename ~= child) or timer:is_closing() then
       return
     end
     timer:stop()
@@ -67,8 +83,10 @@ function M.arm(buf)
       vim.schedule(function()
         if watchers[buf] and watchers[buf].timer == timer then
           M.reload(buf)
-          -- re-arm: atomic rename-writes replace the inode the handle watched
-          M.arm(buf)
+          -- re-arm (unless reloading already did): the file or a missing parent dir may now exist
+          if watchers[buf] and watchers[buf].timer == timer then
+            M.arm(buf)
+          end
         end
       end)
     end)
@@ -77,7 +95,7 @@ end
 
 function M.setup()
   local group = vim.api.nvim_create_augroup("bide_watch", { clear = true })
-  vim.api.nvim_create_autocmd({ "BufReadPost", "BufWritePost", "BufFilePost" }, {
+  vim.api.nvim_create_autocmd({ "BufNewFile", "BufReadPost", "BufWritePost", "BufFilePost" }, {
     group = group,
     callback = function(args)
       warned[args.buf] = nil
