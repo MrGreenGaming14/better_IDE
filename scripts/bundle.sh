@@ -20,7 +20,8 @@ tarball="dist/bide-offline-linux-x86_64.tar.gz"
 shafile="$tarball.sha256"
 
 echo "bide bundle: creating $tarball..."
-{ git ls-files -z; printf 'vendor\0'; } | tar --null -T - --transform 's,^,bide/,' -czf "$tarball"
+# S flag: prefix member names only, never symlink targets (mason bin links are relative)
+{ git ls-files -z; printf 'vendor\0'; } | tar --null -T - --transform 's,^,bide/,S' -czf "$tarball"
 
 sha256sum "$tarball" > "$shafile"
 
