@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# bide launcher: runs the vendored Neovim with NVIM_APPNAME=bide.
+# PATH for vendored tools is set in nvim/init.lua, not here.
+set -euo pipefail
+
+BIDE_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+export NVIM_APPNAME=bide
+
+nvim_bin="$BIDE_ROOT/vendor/nvim/bin/nvim"
+if [[ ! -x "$nvim_bin" ]]; then
+  echo "bide: vendor/nvim missing — run scripts/vendor.sh (online) or install the offline bundle" >&2
+  exit 1
+fi
+
+exec "$nvim_bin" "$@"
